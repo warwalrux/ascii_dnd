@@ -1,0 +1,13 @@
+players:
+  - "Tippin"
+rooms:
+  - name: "cave_1"
+    height: 7
+    width: 7
+    obstructions: true
+    terrain: "cavern"
+  - name: "cave_2"
+    height: 3
+    width: 12
+    obstructions: false
+    terrain: "cavern"
