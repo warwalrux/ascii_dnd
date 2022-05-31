@@ -9,60 +9,35 @@ import pprint
 import json
 import argparse
 import yaml
+import functools
+import logging
+import sys
+
+logging.basicConfig(level=logging.DEBUG, filename="ascii_dnd.log")
 
 ASCII_DND_DIR = os.environ['ASCII_DND_DIR']
 pp = pprint.PrettyPrinter()
 
 # Map things
-class MapGrid():
+class MapGenerator():
     """ Draws a map of a given height and width """
-    def __init__(self, width, height, players):
+    def __init__(self):
         """ New room instance """
-        self.width = width
-        self.height = height
-        self.walls = []
-        self.start = (0, 0)
-        self.goal = (width - 1, height - 1)
-        self.players = players
-
-    def move_player(self, d, player):
-        """Move a player"""
-        pp.pprint(player)
-        x = player.player_pos[0]
-        y = player.player_pos[1]
-        pos = None
-
-        # Up
-        if d[0] == "w":
-            pos = (x, y - 1)
-        # Left
-        if d[0] == "a":
-            pos = (x - 1, y)
-        # Right
-        if d[0] == "d":
-            pos = (x + 1, y)
-        # Down
-        if d[0] == "s":
-            pos = (x, y + 1)
-
-        if pos not in self.walls:
-            player.player_pos = pos
-
-        if pos == self.goal:
-            print("You made it to the end!")
-
-
-    def draw_grid(self, width=2):
-        for y in range(self.height):
-            for x in range(self.width):
-                if (x, y) in self.walls:
+    
+    def draw_grid(self, room, player_locs, width=2):
+        print(player_locs)
+        for y in range(room.data["height"]):
+            for x in range(room.data["width"]):
+                if (x, y) in room.walls:
                     symbol = "^"
-                elif (x, y) in self.players:
+                elif (x, y) in player_locs:
+                    symbol = "@"
+                elif (x, y) in room.exits:
+                    symbol = "#"
+                elif (x, y) in room.loot:
                     symbol = "$"
-                elif (x, y) == self.start:
-                    symbol = "<"
-                elif (x, y) == self.goal:
-                    symbol = ">"
+                elif (x, y) in room.enemies:
+                    symbol = "&"
                 else:
                     symbol = "."
                 print("%%-%ds" % width % symbol, end="")
@@ -72,61 +47,193 @@ class MapGrid():
         subprocess.Popen("cls" if platform.system() == "Windows" else "clear", shell=True)
         time.sleep(0.01)
 
-class Obstacles():
-    def __init__(self, grid: MapGrid):
-        self.grid = grid
+class Room():
+    data = {}
+    loot = {}
+    walls = {}
+    exits = {}
+    enemies = {}
 
-    def gen_cavern(self, pct=0.25):
-        out = []
-        for i in range(int(self.grid.height * self.grid.width * pct) // 2):
+    def __init__(self, room_data):
+        logging.debug("generating room: %s", room_data["name"])
+        self.data = room_data
+        self.loot = self.__gen_loot()
+        self.walls = self.__gen_walls()
+        self.exits = self.__gen_exits()
+        self.enemies = self.__gen_enemies()
 
-            x = randint(1, self.grid.width - 2)
-            y = randint(1, self.grid.height - 2)
+    def __gen_loot(self, pct=0.25):
+        logging.debug("generating loot.")
+        retval = []
+        for loot in self.data["loot"]:
+            x = randint(1, self.data["width"] - 2)
+            y = randint(1, self.data["height"] - 2)
+            retval.append((x, y))
+        return retval
+    
+    def __gen_enemies(self, pct=0.25):
+        if "enemies" in self.data:
+            logging.debug("generating enemies.")
+            retval = []
+            for enemy in self.data["enemies"]:
+                x = randint(1, self.data["width"] - 2)
+                y = randint(1, self.data["height"] - 2)
+                retval.append((x, y))
+            return retval
+        else:
+            return None
+    
+    def __gen_walls(self, pct=0.25):
+        logging.debug("generating walls.")
+        retval = []
+        for i in range(int(self.data["height"] * self.data["width"] * pct) // 2):
 
-            out.append((x, y))
-            out.append((x + choice([-1, 0, 1]), y + choice([-1, 0, 1])))
-        return out
+            x = randint(1, self.data["width"] - 2)
+            y = randint(1, self.data["height"] - 2)
+
+            retval.append((x, y))
+            retval.append((x + choice([-1, 0, 1]), y + choice([-1, 0, 1])))
+        return retval
+
+    def __gen_exits(self):
+        retval = []
+        for exit in self.data["exits"]:
+            if "north" in exit:
+                x = randint(1, self.data["width"] -2)
+                y = 0
+                retval.append((x, y))
+            if "south" in exit:
+                x = randint(1, self.data["width"] -2)
+                y = self.data["height"]
+                retval.append((x, y))
+            if "east" in exit:
+                x = 0
+                y = randint(1, self.data["heigh"] -2)
+            if "west" in exit:
+                x = self.data["height"]
+                y = randint(1, self.data["heigh"] -2)
+                retval.append((x, y))
+
+        return retval
 
 class Character():
-    def __init__(self, name):
-        self.data = json.load(open(os.path.join(ASCII_DND_DIR, "characters", "%s.json" % name), "r"))
-        self.player_pos = (0, 0)
-
+    data = None
+    player_pos = None
+    def __init__(self, data, player_pos=(0, 0)):
+        self.data = data
+        self.player_pos = player_pos
+   
 class Game():
     def __init__(self, game_data):
+        logging.info("loading game data...")
         self.game_data = game_data
         self.players = self.__load_players()
- 
+        self.rooms = self.__load_rooms()
+
     def __load_players(self):
+        logging.debug("loading players from file")
         players = []
         for player in self.game_data["players"]:
-            players.append(Character(player))
+            player_data = json.load(open(os.path.join(ASCII_DND_DIR, "characters", "%s.json" % player), "r"))
+            players.append(Character(player_data))
         return players
+    
 
-    def __take_turn(self, room, player):
-        while player.player_pos != room.goal:
-            room.draw_grid()
-            d = input("Which way? (WASD)")[0]
-            player.player_pos = room.move_player(d, player)
-            room.clear()
+    def __load_rooms(self):
+        logging.info("loading dungeon...")
+        retval = []
+        for room in self.game_data["rooms"]:
+            retval.append(Room(room))
+        return retval
+
+    def take_turn(self, stage, room, player):
+        ap = int(player.data["sheet_data"]["jsondata"]["speed"])
+        name = player.data["sheet_data"]["jsondata"]["name"]
+        p_ref = self.players.index(player)
+
+        def __retry():
+            self.take_turn(stage, room, player)
+
+        def __draw_screen(room, player_locs, messages=None):
+            stage.clear()
+            stage.draw_grid(room, player_locs)
+            if messages:
+                print()
+                for message in messages:    
+                    print(message)
+                    print()
+
+        def __prompt_move(ap):
+            while ap >= 1:
+                logging.debug("prompting for move")
+                logging.debug("player current_pos: %s", str(player.player_pos))
+                __draw_screen(room, [ p.player_pos for p in self.players ], [ "%s -- %s" % (name, ap) ])
+                direction = input("WASD to move, enter to submit: ")
+                
+                x = self.players[p_ref].player_pos[0]
+                y = self.players[p_ref].player_pos[1]
+                
+                pos = None
+
+                # Up
+                if direction[0] == "w":
+                    pos = (x, y - 1)
+                # Left
+                elif direction[0] == "a":
+                    pos = (x - 1, y)
+                # Right
+                elif direction[0] == "d":
+                    pos = (x + 1, y)
+                # Down
+                elif direction[0] == "s":
+                    pos = (x, y + 1)
+                else:
+                    raise Exception
+                    
+                if pos in room.walls:
+                    __prompt_move(ap)
+              
+                if pos in room.exits:
+
+                else:
+                    self.players[p_ref] = Character(player.data, pos)
+
+        
+        __draw_screen(room, [ p.player_pos for p in self.players ])
+        choice = input("m to move, a to attack, e for inventory, q to quit: ")
+
+        if choice == "m":
+            __prompt_move(ap)
+        elif choice == "q":
+            sys.exit(0)
+        else:
+            __retry()
 
     def start(self):
-        for room in self.game_data["rooms"]:
-            room = MapGrid(room["width"], room["height"], self.players)
-            generator = Obstacles(room)
-            room.walls = generator.gen_cavern()
+        stage = MapGenerator()
+        for room in self.rooms:
+            stage.clear()
             for player in self.players:
-                self.__take_turn(room, player)
+                is_turn = True
+                while is_turn:
+                    self.take_turn(stage, room, player)
+                    is_turn = False
+                print("Turn Complete!")
             
 
 def main():
+    logging.debug("Starting new game...")
     parser = argparse.ArgumentParser(description="ASCII DND")
-    parser.add_argument('-s', '--script', help="Game script")
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument('-n', '--new-game', help="start a new game")
+    actions.add_argument('-l', '--load-game', help="load an old game")
     args = parser.parse_args()
 
-    data = yaml.safe_load(open(args.script, "r"))
-    quest = Game(data)
-    quest.start()
+    if args.new_game:
+        logging.debug("loading %s", args.new_game)
+        data = yaml.safe_load(open(os.path.join(ASCII_DND_DIR, "game_scripts", "%s.yml"%args.new_game), "r"))
+        quest = Game(data)
+        quest.start()
 
 
 if __name__ == "__main__":

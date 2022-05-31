@@ -1,13 +1,31 @@
 players:
   - "Tippin"
 rooms:
-  - name: "cave_1"
-    height: 7
-    width: 7
-    obstructions: true
-    terrain: "cavern"
-  - name: "cave_2"
-    height: 3
-    width: 12
-    obstructions: false
-    terrain: "cavern"
+    - name: "Cavern -- Room 1"
+      height: 7
+      width: 7
+      obstructions: true
+      terrain: "cavern"
+      exits:
+          north: "cave_room_2"
+          south: "exit"
+      loot:
+          - weapon:
+              sword:
+      enemies:
+          - skeleton:
+              level: "1"
+          - skeleton:
+              level: "1"
+
+      description: "A cavern just big enough to stand in seems to open up"
+    - name: "Cavern -- Room 2"
+      height: 12
+      width: 3
+      obstructions: false
+      terrain: "cavern"
+      exits: 
+          south: "cave_room_1"
+      description: "A long narrow pathway stretches out before you."
+      loot:
+        - gold: 5
